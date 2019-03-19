@@ -3,6 +3,10 @@
 
 ## :construction:**WIP**:construction:
 
+## Dependencies
+- [ImageMagick](https://www.imagemagick.org/): Convert SVG :arrow_right: JPG :arrow_right: GIF
+- [urfave/cli](https://github.com/urfave/cli): CLI framework
+
 ## Usage
 Clone the repository
   ```bash
@@ -12,19 +16,19 @@ Clone the repository
 
 Install the binary and its dependencies
 ```bash
+# install ImageMagick 
+sudo dnf install ImageMagick     # Fedora
+sudo apt-get install imagemagick # Debian
+
+# install urfave/cli
 go install ./...
 ```
 
 Run the CLI with a GitHub handle
 ```bash
-activitygiffer camilogarcialarotta
+activitygiffer -y 2016,2018,2019 camilogarcialarotta
 ```
 
-The application will generate an SVG file of the same name as the user handle
+The application will generate a GIF named after the user
 
-<img src="https://i.imgur.com/nYqg9oN.png" width="300">
-
-## TODO
-- Scrape all available years from a user's homepage
-- Add polygon to SVG
-- Rasterize SVGs as GIFs
+<img src="https://i.imgur.com/3Y7VLb7.gif" width="300">
