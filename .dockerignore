@@ -1,0 +1,16 @@
+# git
+.git
+.gitignore
+LICENSE
+README.md
+
+# activitygiffer
+*.svg
+*.jpg
+activitygiffer
+main
+
+Dockerfile
+
+out
+

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
@@ -291,6 +292,7 @@ func toSVG(activity githubActivity) (string, error) {
 	return fileName, nil
 }
 
+// toJPG converts an SVG to JPG via ImageMagick
 func toJPG(svg string) (string, error) {
 	jpg := strings.Replace(svg, ".svg", ".jpg", 1)
 	cmd := exec.Command("convert", "-density", "1000", "-resize", "1000x", svg, jpg)
@@ -302,8 +304,14 @@ func toJPG(svg string) (string, error) {
 	return jpg, nil
 }
 
+// toGIF bundles the JPGs to create ./out/<userhandle>.gif via ImageMagick
+// if ./out does not exist toGIF will create it
 func toGIF(userHandle string, jpgs []string) (string, error) {
-	gif := fmt.Sprintf("%s.gif", userHandle)
+	outputPath := "out"
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		os.Mkdir(outputPath, os.ModePerm)
+	}
+	gif := filepath.Join(".", outputPath, fmt.Sprintf("%s.gif", userHandle))
 	args := []string{"-resize", "50%", "-delay", "50", "-loop", "0"}
 	args = append(args, jpgs...)
 	args = append(args, gif)
