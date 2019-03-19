@@ -1,4 +1,5 @@
 *.svg
+*.jpg
 *.gif
 
 # Binaries for programs and plugins
@@ -8,6 +9,7 @@
 *.so
 *.dylib
 main
+activitygiffer
 
 # Test binary, build with `go test -c`
 *.test
