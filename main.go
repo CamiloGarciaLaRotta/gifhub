@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"text/template"
@@ -52,6 +53,8 @@ func generateGIF(c *cli.Context) error {
 
 	specificYears := parseYearFlag(c.String("years"))
 
+	log.Println("Scraping Activities")
+	activities := []githubActivity{}
 	for _, year := range specificYears {
 		activity, err := activity(userHandle, year)
 		if err != nil {
@@ -60,12 +63,55 @@ func generateGIF(c *cli.Context) error {
 		}
 
 		log.Printf("Activity: %+v\n", activity)
+		activities = append(activities, activity)
+	}
 
-		if err := toSVG(activity); err != nil {
+	if len(activities) == 0 {
+		return fmt.Errorf("Failed to scrape any activities for %s", userHandle)
+	}
+
+	log.Println("Converting activities to SVGs")
+	svgs := []string{}
+	for _, activity := range activities {
+		svgName, err := toSVG(activity)
+		if err != nil {
 			log.Printf("SVG: %v\n", err)
 			continue
 		}
+		//  we don't use the idx to directly store the svg filename
+		// because in case of failure for any of the years,
+		// its easier to just append the succesful ones
+		// e.g. append(svgs, svgName) instead of svgs[idx] = svgName
+		svgs = append(svgs, svgName)
 	}
+
+	if len(svgs) == 0 {
+		return fmt.Errorf("Failed to create a single SVG for %s", userHandle)
+	}
+
+	log.Println("Converting SVGs to JPGs")
+	jpgs := []string{}
+	for _, svg := range svgs {
+		jpg, err := toJPG(svg)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		jpgs = append(jpgs, jpg)
+	}
+
+	if len(jpgs) == 0 {
+		return fmt.Errorf("Failed to create a single JPG for %s", userHandle)
+	}
+
+	log.Println("Bundling JPGs to single GIF")
+	gif, err := toGIF(userHandle, jpgs)
+	if err != nil {
+		return fmt.Errorf("GIF: %v", err)
+	}
+
+	log.Printf("Created: %s\n", gif)
+
 	return nil
 }
 
@@ -224,22 +270,48 @@ func patternNotFound(pattern []byte) error {
 }
 
 // toSVG creates an SVG of the user's activity named after the user
-func toSVG(activity githubActivity) error {
+func toSVG(activity githubActivity) (string, error) {
 	tmpl, err := template.ParseFiles("svg.tmpl")
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	f, err := os.Create(fmt.Sprintf("%s-%s.svg", activity.Handle, activity.Year))
+	fileName := fmt.Sprintf("%s-%s.svg", activity.Handle, activity.Year)
+	f, err := os.Create(fileName)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 
 	err = tmpl.Execute(f, activity)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return fileName, nil
+}
+
+func toJPG(svg string) (string, error) {
+	jpg := strings.Replace(svg, ".svg", ".jpg", 1)
+	cmd := exec.Command("convert", "-density", "1000", "-resize", "1000x", svg, jpg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("JPG: %v", err)
+	}
+	return jpg, nil
+}
+
+func toGIF(userHandle string, jpgs []string) (string, error) {
+	gif := fmt.Sprintf("%s.gif", userHandle)
+	args := []string{"-resize", "50%", "-delay", "50", "-loop", "0"}
+	args = append(args, jpgs...)
+	args = append(args, gif)
+	cmd := exec.Command("convert", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return gif, nil
 }
