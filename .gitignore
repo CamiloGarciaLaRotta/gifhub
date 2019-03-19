@@ -1,9 +1,12 @@
+clean.svg
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+main
 
 # Test binary, build with `go test -c`
 *.test
