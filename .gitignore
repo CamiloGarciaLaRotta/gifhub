@@ -1,5 +1,5 @@
-clean.svg
-output.gif
+*.svg
+*.gif
 
 # Binaries for programs and plugins
 *.exe

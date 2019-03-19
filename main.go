@@ -8,14 +8,16 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"text/template"
+	"time"
 
 	"github.com/urfave/cli"
 )
 
 // githubActivity contains GitHub's tracked user activity percentages
 type githubActivity struct {
-	Handle                            string
+	Handle, Year                      string
 	Commits, Issues, Prs, CodeReviews int
 }
 
@@ -23,6 +25,13 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "Activity Giffer"
 	app.Usage = "Create GIFs from a people's GitHub activity graph"
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:  "years, y",
+			Value: "",
+			Usage: "Scrape activityfrom years `2016,2017,2019`",
+		},
+	}
 	app.Action = generateGIF
 
 	err := app.Run(os.Args)
@@ -33,29 +42,52 @@ func main() {
 
 // generateGIF creates a GIF of the activities of the input user
 func generateGIF(c *cli.Context) error {
-	if len(os.Args) == 1 {
+	var userHandle string
+	if c.NArg() > 0 {
+		userHandle = c.Args().Get(0)
+	} else {
 		cli.ShowAppHelp(c)
 		return nil
 	}
 
-	userHandle := c.Args().Get(0)
-	activity, err := activity(userHandle)
-	if err != nil {
-		return err
+	specificYears := parseYearFlag(c.String("years"))
+
+	for _, year := range specificYears {
+		activity, err := activity(userHandle, year)
+		if err != nil {
+			log.Printf("scrape activity: %v\n", err)
+			continue
+		}
+
+		log.Printf("Activity: %+v\n", activity)
+
+		if err := toSVG(activity); err != nil {
+			log.Printf("SVG: %v\n", err)
+			continue
+		}
 	}
-
-	fmt.Printf("Activity: %+v\n", activity)
-
-	if err := toSVG(activity); err != nil {
-		return err
-	}
-
 	return nil
 }
 
-// activity scrapes the user activity for a GitHub user
-func activity(userHandle string) (githubActivity, error) {
-	body, err := getHomePage(userHandle)
+// parseYearFlag returns the years passed to the -y flag
+// if no flag is passed, it defaults to current year
+func parseYearFlag(rawFlag string) []string {
+	cleanYearFlag := strings.Trim(rawFlag, ", ")
+
+	var specificYears []string
+	if cleanYearFlag == "" {
+		currentYear := fmt.Sprintf("%d", time.Now().Year())
+		specificYears = append(specificYears, currentYear)
+	} else {
+		specificYears = strings.Split(cleanYearFlag, ",")
+	}
+
+	return specificYears
+}
+
+// activity scrapes the user activity for a GitHub user for a given year
+func activity(userHandle, year string) (githubActivity, error) {
+	body, err := getHomePage(userHandle, year)
 	if err != nil {
 		return githubActivity{}, err
 	}
@@ -65,13 +97,14 @@ func activity(userHandle string) (githubActivity, error) {
 		return githubActivity{}, err
 	}
 	activity.Handle = userHandle
+	activity.Year = year
 
 	return activity, nil
 }
 
-// getHomePage GETs the HTML text of a GitHub's user homepage
-func getHomePage(userHandle string) ([]byte, error) {
-	homePage := fmt.Sprintf("https://github.com/%s", userHandle)
+// getHomePage GETs the HTML text of a GitHub's user homepage overview for a given year
+func getHomePage(userHandle, year string) ([]byte, error) {
+	homePage := fmt.Sprintf("https://github.com/%[1]s?tab=overview&from=%[2]s-01-01&to=%[2]s-12-31", userHandle, year)
 	req, err := http.NewRequest("GET", homePage, nil)
 	if err != nil {
 		return nil, err
@@ -87,7 +120,7 @@ func getHomePage(userHandle string) ([]byte, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("GET status: %d %s", res.StatusCode, res.Status)
+		return nil, fmt.Errorf("GET status: %s: %s", res.Status, homePage)
 	}
 
 	body, err := ioutil.ReadAll(res.Body)
@@ -163,8 +196,6 @@ func extractActivity(html []byte) (githubActivity, error) {
 	activity.Prs = activities["prs"]
 	activity.CodeReviews = activities["codeReviews"]
 
-	fmt.Printf("Scrapped: %s\n", string(cleanActivity))
-
 	return activity, nil
 }
 
@@ -199,7 +230,7 @@ func toSVG(activity githubActivity) error {
 		return err
 	}
 
-	f, err := os.Create(fmt.Sprintf("%s.svg", activity.Handle))
+	f, err := os.Create(fmt.Sprintf("%s-%s.svg", activity.Handle, activity.Year))
 	if err != nil {
 		return err
 	}
