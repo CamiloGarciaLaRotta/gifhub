@@ -10,7 +10,9 @@
 - [urfave/cli](https://github.com/urfave/cli): CLI framework
 
 ## How to use
-If you are working on Windows or don't want to install the dependencies, run the application via Docker.
+You have 2 options:
+- **Linux/OSX/Windows:** Build and run a Docker container with the app. Requires Docker
+- **Linux:** Compile directly from source. Requires Golang and the 2 dependencies (ImageMagick, urfave/cli)
 
 Regardless of how you choose to run the app, clone the repository
   ```bash
@@ -40,11 +42,13 @@ The application will generate a GIF named after the user inside `./out`
 ### Run directly in your machine
 Install the binary and its dependencies
 ```bash
-# install ImageMagick 
-sudo dnf install ImageMagick     # Fedora
-sudo apt-get install imagemagick # Debian
+# install ImageMagick with the command for your distribution
+sudo dnf install ImageMagick          # Fedora
+sudo apt-get install imagemagick      # Debian
+sudo pacman -S imagemagick            # Arch Linux
+sudo emerge -av media-gfx/imagemagick # Gentoo
 
-# install urfave/cli
+# install urfave/cli and activitygiffer
 go install ./...
 ```
 
