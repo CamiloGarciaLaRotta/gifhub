@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -30,8 +31,12 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "years, y",
-			Value: "",
 			Usage: "Scrape activityfrom years `2016,2017,2019`",
+		},
+		cli.StringFlag{
+			Name:  "out-dir, o",
+			Usage: "Save the GIF in the output directory `./dir`",
+			Value: "./out",
 		},
 	}
 	app.Action = generateGIF
@@ -53,6 +58,10 @@ func generateGIF(c *cli.Context) error {
 	}
 
 	specificYears := parseYearFlag(c.String("years"))
+	outputDir := c.String("out-dir")
+
+	garbageCollector := []string{}
+	defer cleanUp(&garbageCollector)
 
 	log.Println("Scraping Activities")
 	activities := []githubActivity{}
@@ -74,7 +83,7 @@ func generateGIF(c *cli.Context) error {
 	log.Println("Converting activities to SVGs")
 	svgs := []string{}
 	for _, activity := range activities {
-		svgName, err := toSVG(activity)
+		svgName, err := toSVG(activity, outputDir)
 		if err != nil {
 			log.Printf("SVG: %v\n", err)
 			continue
@@ -84,6 +93,7 @@ func generateGIF(c *cli.Context) error {
 		// its easier to just append the succesful ones
 		// e.g. append(svgs, svgName) instead of svgs[idx] = svgName
 		svgs = append(svgs, svgName)
+		garbageCollector = append(garbageCollector, svgName)
 	}
 
 	if len(svgs) == 0 {
@@ -99,6 +109,7 @@ func generateGIF(c *cli.Context) error {
 			continue
 		}
 		jpgs = append(jpgs, jpg)
+		garbageCollector = append(garbageCollector, jpg)
 	}
 
 	if len(jpgs) == 0 {
@@ -106,7 +117,7 @@ func generateGIF(c *cli.Context) error {
 	}
 
 	log.Println("Bundling JPGs to single GIF")
-	gif, err := toGIF(userHandle, jpgs)
+	gif, err := toGIF(jpgs, userHandle)
 	if err != nil {
 		return fmt.Errorf("GIF: %v", err)
 	}
@@ -270,15 +281,24 @@ func patternNotFound(pattern []byte) error {
 	return fmt.Errorf("bytes.Index: could not find %s", pattern)
 }
 
-// toSVG creates an SVG of the user's activity named after the user
-func toSVG(activity githubActivity) (string, error) {
+// toSVG creates an SVG of the user's activity in the output directory
+// the file will be created as <outputDir>/<userHandle>-<year>.jpg
+// if the output directory does not exist, toSVG will create it
+
+func toSVG(activity githubActivity, outputDir string) (string, error) {
 	tmpl, err := template.ParseFiles("svg.tmpl")
 	if err != nil {
 		return "", err
 	}
 
-	fileName := fmt.Sprintf("%s-%s.svg", activity.Handle, activity.Year)
-	f, err := os.Create(fileName)
+	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+		if err := os.Mkdir(outputDir, os.ModePerm); err != nil {
+			return "", nil
+		}
+	}
+
+	fileName := fmt.Sprintf("%s-%s-*.svg", activity.Handle, activity.Year)
+	f, err := ioutil.TempFile(outputDir, fileName)
 	if err != nil {
 		return "", err
 	}
@@ -289,10 +309,11 @@ func toSVG(activity githubActivity) (string, error) {
 		return "", err
 	}
 
-	return fileName, nil
+	return f.Name(), nil
 }
 
 // toJPG converts an SVG to JPG via ImageMagick
+// it creates the JPG inside the same directory as the SVG
 func toJPG(svg string) (string, error) {
 	jpg := strings.Replace(svg, ".svg", ".jpg", 1)
 	cmd := exec.Command("convert", "-density", "1000", "-resize", "1000x", svg, jpg)
@@ -304,14 +325,16 @@ func toJPG(svg string) (string, error) {
 	return jpg, nil
 }
 
-// toGIF bundles the JPGs to create ./out/<userhandle>.gif via ImageMagick
-// if ./out does not exist toGIF will create it
-func toGIF(userHandle string, jpgs []string) (string, error) {
-	outputPath := "out"
-	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
-		os.Mkdir(outputPath, os.ModePerm)
+// toGIF bundles the JPGs to create <userhandle>.gif via ImageMagick
+// it creates the GIF inside the same directory as the JPGs
+func toGIF(jpgs []string, userHandle string) (string, error) {
+	if len(jpgs) == 0 {
+		return "", errors.New("GIF: no JPGs to bundle")
 	}
-	gif := filepath.Join(".", outputPath, fmt.Sprintf("%s.gif", userHandle))
+
+	outputDir := filepath.Dir(jpgs[0])
+	fileName := fmt.Sprintf("%s.gif", userHandle)
+	gif := filepath.Join(".", outputDir, fileName)
 	args := []string{"-resize", "50%", "-delay", "50", "-loop", "0"}
 	args = append(args, jpgs...)
 	args = append(args, gif)
@@ -322,4 +345,15 @@ func toGIF(userHandle string, jpgs []string) (string, error) {
 		return "", err
 	}
 	return gif, nil
+}
+
+// cleanUp deletes all the files passed as input
+func cleanUp(files *[]string) {
+	log.Println("Cleaning up")
+	for _, file := range *files {
+		if err := os.Remove(file); err != nil {
+			log.Printf("Cleanup: %v", err)
+			continue
+		}
+	}
 }
