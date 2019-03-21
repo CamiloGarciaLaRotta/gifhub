@@ -1,8 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="255" height="255" xmlns="http://www.w3.org/2000/svg">
+<svg width="255" height="285" xmlns="http://www.w3.org/2000/svg">
   <g>
     <style>
       /* <![CDATA[ */
+      .background {
+        width: 100%;
+        height: 100%;
+        fill: white;
+      }
+      path {
+        stroke-linejoin: round;
+        fill: #7bc96f;
+        stroke: #7bc96f;
+        stroke-width: 7;
+      }
+      line {
+        stroke: #6cb267;
+        stroke-width: 2;
+      }
+      ellipse {
+        stroke: #6cb267;
+        stroke-width: 2;
+        fill: white;
+      }
       text {
         stroke-width: 0.1;
         font-size: 12px;
@@ -14,22 +34,25 @@
       .quantity {
         fill: #959da5;
       }
-      line {
-        stroke: #6cb267;
-        stroke-width: 2;
-      }
       /* ]]> */
     </style>
-    <rect width="100%" height="100%" fill="white"/>
+    <rect class="background"/>
+    <path d="M137.5,{{.Coords.CodeReviewY}} L{{.Coords.IssuesX}},127.5 L137.5,{{.Coords.PrsY}} L{{.Coords.CommitsX}},127.5 z"></path>
     <line x1="70"    y1="127.5" x2="205"   y2="127.5"></line>
     <line x1="137.5" y1="60"    x2="137.5" y2="195"></line>
-    <text x="137.5" y="35"  class="quantity" text-anchor="middle">{{.CodeReviews}}%</text>
+    {{if ne 127.5 .Coords.CodeReviewY}}<ellipse cx="137.5" cy="{{.Coords.CodeReviewY}}" rx="3" ry="3"></ellipse>{{end}}
+    {{if ne 137.5 .Coords.IssuesX}}<ellipse cx="{{.Coords.IssuesX}}" cy="127.5"         rx="3" ry="3"></ellipse>{{end}}
+    {{if ne 127.5 .Coords.PrsY}}<ellipse cx="137.5" cy="{{.Coords.PrsY}}"               rx="3" ry="3"></ellipse>{{end}}
+    {{if ne 137.5 .Coords.CommitsX}}<ellipse cx="{{.Coords.CommitsX}}" cy="127.5"       rx="3" ry="3"></ellipse>{{end}}
+    <text x="137.5" y="35"  class="quantity" text-anchor="middle">{{.Data.CodeReviews}}%</text>
     <text x="137.5" y="50"  class="label"    text-anchor="middle">Code review</text>
-    <text y="125"   x="215" class="quantity" text-anchor="start">{{.Issues}}%</text>
+    <text y="125"   x="215" class="quantity" text-anchor="start">{{.Data.Issues}}%</text>
     <text y="140"   x="210" class="label"    text-anchor="start">Issues</text>
-    <text x="137.5" y="210" class="quantity" text-anchor="middle">{{.Prs}}%</text>
+    <text x="137.5" y="210" class="quantity" text-anchor="middle">{{.Data.Prs}}%</text>
     <text x="137.5" y="225" class="label"    text-anchor="middle">Pull requests</text>
-    <text y="125"   x="55"  class="quantity" text-anchor="end">{{.Commits}}%</text>
+    <text y="125"   x="55"  class="quantity" text-anchor="end">{{.Data.Commits}}%</text>
     <text y="140"   x="65"  class="label"    text-anchor="end">Commits</text>
+    <text y="250"   x="137.5" text-anchor="middle">{{.Data.Handle}}</text>
+    <text y="265"   x="137.5" text-anchor="middle">{{.Data.Year}}</text>
   </g>
 </svg>

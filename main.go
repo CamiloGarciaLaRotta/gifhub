@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,10 +19,19 @@ import (
 	"github.com/urfave/cli"
 )
 
-// githubActivity contains GitHub's tracked user activity percentages
-type githubActivity struct {
+// activity contains GitHub's tracked user activity percentages
+type activity struct {
 	Handle, Year                      string
 	Commits, Issues, Prs, CodeReviews int
+}
+
+// coords contains the X,Y coordinates of the activities in an activity graph
+type coords struct{ CodeReviewY, IssuesX, PrsY, CommitsX float64 }
+
+// graph contains all information to build the graph of a user's activity for a given year
+type graph struct {
+	Data   activity
+	Coords coords
 }
 
 func main() {
@@ -64,26 +74,34 @@ func generateGIF(c *cli.Context) error {
 	defer cleanUp(&garbageCollector)
 
 	log.Println("Scraping Activities")
-	activities := []githubActivity{}
+	activityGraphs := []graph{}
 	for _, year := range specificYears {
-		activity, err := activity(userHandle, year)
+		activity, err := scrapeActivity(userHandle, year)
 		if err != nil {
-			log.Printf("scrape activity: %v\n", err)
+			log.Printf("scrape activity for %s: %v\n", year, err)
+			continue
+		}
+
+		coords, err := coordinates(activity)
+		if err != nil {
+			log.Printf("coordinates for %s: %v\n", year, err)
 			continue
 		}
 
 		log.Printf("Activity: %+v\n", activity)
-		activities = append(activities, activity)
+
+		activityGraphs = append(activityGraphs, graph{activity, coords})
 	}
 
-	if len(activities) == 0 {
+	if len(activityGraphs) == 0 {
 		return fmt.Errorf("Failed to scrape any activities for %s", userHandle)
 	}
 
 	log.Println("Converting activities to SVGs")
 	svgs := []string{}
-	for _, activity := range activities {
-		svgName, err := toSVG(activity, outputDir)
+	for _, graph := range activityGraphs {
+		svgName, err := toSVG(graph, outputDir)
+		garbageCollector = append(garbageCollector, svgName)
 		if err != nil {
 			log.Printf("SVG: %v\n", err)
 			continue
@@ -93,7 +111,6 @@ func generateGIF(c *cli.Context) error {
 		// its easier to just append the succesful ones
 		// e.g. append(svgs, svgName) instead of svgs[idx] = svgName
 		svgs = append(svgs, svgName)
-		garbageCollector = append(garbageCollector, svgName)
 	}
 
 	if len(svgs) == 0 {
@@ -104,12 +121,13 @@ func generateGIF(c *cli.Context) error {
 	jpgs := []string{}
 	for _, svg := range svgs {
 		jpg, err := toJPG(svg)
+		garbageCollector = append(garbageCollector, jpg)
 		if err != nil {
 			log.Println(err)
 			continue
 		}
+
 		jpgs = append(jpgs, jpg)
-		garbageCollector = append(garbageCollector, jpg)
 	}
 
 	if len(jpgs) == 0 {
@@ -144,20 +162,20 @@ func parseYearFlag(rawFlag string) []string {
 }
 
 // activity scrapes the user activity for a GitHub user for a given year
-func activity(userHandle, year string) (githubActivity, error) {
+func scrapeActivity(userHandle, year string) (activity, error) {
 	body, err := getHomePage(userHandle, year)
 	if err != nil {
-		return githubActivity{}, err
+		return activity{}, err
 	}
 
-	activity, err := extractActivity(body)
+	a, err := extractActivity(body)
 	if err != nil {
-		return githubActivity{}, err
+		return activity{}, err
 	}
-	activity.Handle = userHandle
-	activity.Year = year
+	a.Handle = userHandle
+	a.Year = year
 
-	return activity, nil
+	return a, nil
 }
 
 // getHomePage GETs the HTML text of a GitHub's user homepage overview for a given year
@@ -188,9 +206,9 @@ func getHomePage(userHandle, year string) ([]byte, error) {
 	return body, nil
 }
 
-// extractActivity returns a githubActivity from a GitHub homepage html text
-func extractActivity(html []byte) (githubActivity, error) {
-	activity := githubActivity{}   // the struct to return
+// extractActivity returns a activity from a GitHub homepage html text
+func extractActivity(html []byte) (activity, error) {
+	activity := activity{}         // the struct to return
 	activities := map[string]int{} // the temporary map to store scrapped activities
 
 	// tokens to match in the html
@@ -281,11 +299,41 @@ func patternNotFound(pattern []byte) error {
 	return fmt.Errorf("bytes.Index: could not find %s", pattern)
 }
 
+// coordinates computes the coords forming the SVG path of the activity percentages
+func coordinates(activity activity) (coords, error) {
+	const (
+		xAxis          = 137.5 // x position of the axis Commits - Issues
+		yAxis          = 127.5 // y position of the axis CodeReviews - Prs
+		activityLength = 67.5  // length of a single activity axis
+		thresh         = 0.8   // threshold to cap the actiity delta
+	)
+
+	coords := coords{
+		CodeReviewY: yAxis - cappedDelta(float64(activity.CodeReviews), activityLength, thresh),
+		IssuesX:     xAxis + cappedDelta(float64(activity.Issues), activityLength, thresh),
+		PrsY:        yAxis + cappedDelta(float64(activity.Prs), activityLength, thresh),
+		CommitsX:    xAxis - cappedDelta(float64(activity.Commits), activityLength, thresh),
+	}
+	return coords, nil
+}
+
+// cappedDelta will return a delta with magnitude based on n and proportionate to m
+// if the magnitude is greater than thresh, the delta is bumped to m
+func cappedDelta(n, m, thresh float64) float64 {
+	// wolfram compatile notation: 1-e^{-n/50}
+	// see: https://www.desmos.com/calculator/8pcvpgftdv
+	delta := 1.0 - math.Pow(math.E, n/-50.0)
+	if delta > thresh {
+		delta = 1.0
+	}
+	return m * delta
+}
+
 // toSVG creates an SVG of the user's activity in the output directory
 // the file will be created as <outputDir>/<userHandle>-<year>.jpg
 // if the output directory does not exist, toSVG will create it
 
-func toSVG(activity githubActivity, outputDir string) (string, error) {
+func toSVG(graph graph, outputDir string) (string, error) {
 	tmpl, err := template.ParseFiles("svg.tmpl")
 	if err != nil {
 		return "", err
@@ -297,16 +345,16 @@ func toSVG(activity githubActivity, outputDir string) (string, error) {
 		}
 	}
 
-	fileName := fmt.Sprintf("%s-%s-*.svg", activity.Handle, activity.Year)
+	fileName := fmt.Sprintf("%s-%s-*.svg", graph.Data.Handle, graph.Data.Year)
 	f, err := ioutil.TempFile(outputDir, fileName)
 	if err != nil {
-		return "", err
+		return f.Name(), err
 	}
 	defer f.Close()
 
-	err = tmpl.Execute(f, activity)
+	err = tmpl.Execute(f, graph)
 	if err != nil {
-		return "", err
+		return f.Name(), err
 	}
 
 	return f.Name(), nil
@@ -335,7 +383,7 @@ func toGIF(jpgs []string, userHandle string) (string, error) {
 	outputDir := filepath.Dir(jpgs[0])
 	fileName := fmt.Sprintf("%s.gif", userHandle)
 	gif := filepath.Join(".", outputDir, fileName)
-	args := []string{"-resize", "50%", "-delay", "50", "-loop", "0"}
+	args := []string{"-resize", "50%", "-delay", "100", "-loop", "0"}
 	args = append(args, jpgs...)
 	args = append(args, gif)
 	cmd := exec.Command("convert", args...)
