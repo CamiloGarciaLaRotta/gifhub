@@ -1,9 +1,7 @@
 # activitygiffer
 :chart_with_upwards_trend: Create GIFs from user's GitHub activity graph
 
-## :construction: **WIP** :construction:
-
-<img src="https://i.imgur.com/3Y7VLb7.gif" width="300">
+<img src="https://i.imgur.com/nMqGn3m.gif" width="300">
 
 ## Dependencies
 - [ImageMagick](https://www.imagemagick.org/): Convert SVG :arrow_right: JPG :arrow_right: GIF
@@ -34,7 +32,7 @@ docker run \
   -it \
    --rm \
   -v $(pwd)/out:/app/out \
-  activitygiffer -y 2016,2017,2018,2019 camilogarcialarotta
+  activitygiffer -y 2016,2018,2019 camilogarcialarotta
 ```
 
 The application will generate a GIF named after the user inside `./out`
