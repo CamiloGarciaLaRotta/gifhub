@@ -37,7 +37,8 @@ docker run \
   activitygiffer camilogarcialarotta
 ```
 
-The application will generate a GIF named after the user inside `./out`
+The application will generate a GIF named after the user inside `./out`  
+For more information on available flags, run `activitygiffer --help`
 
 ### Run directly in your machine
 Install the binary and its dependencies
@@ -57,4 +58,5 @@ Run the CLI with a GitHub handle
 activitygiffer camilogarcialarotta
 ```
 
-The application will generate a GIF named after the user inside `./out`
+The application will generate a GIF named after the user inside `./out`  
+For more information on available flags, run `activitygiffer --help`
