@@ -8,7 +8,9 @@
 - [urfave/cli](https://github.com/urfave/cli): CLI framework
 
 ## How to use
-You have 2 options:
+1. If your GitHub profile does not yet display activity overviews, [enable it](https://github.blog/changelog/2018-08-24-profile-activity-overview/)
+
+2. Depending on your platform you can run `activitygiffer` in 2 ways:
 - **Linux/OSX/Windows:** Build and run a Docker container with the app. Requires Docker
 - **Linux:** Compile directly from source. Requires Golang and the 2 dependencies (ImageMagick, urfave/cli)
 
@@ -32,7 +34,7 @@ docker run \
   -it \
    --rm \
   -v $(pwd)/out:/app/out \
-  activitygiffer -y 2016,2018,2019 camilogarcialarotta
+  activitygiffer camilogarcialarotta
 ```
 
 The application will generate a GIF named after the user inside `./out`
@@ -52,7 +54,7 @@ go install ./...
 
 Run the CLI with a GitHub handle
 ```bash
-activitygiffer -y 2016,2018,2019 camilogarcialarotta
+activitygiffer camilogarcialarotta
 ```
 
 The application will generate a GIF named after the user inside `./out`
