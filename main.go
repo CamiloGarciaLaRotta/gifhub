@@ -11,10 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
-	"time"
 
 	"github.com/urfave/cli"
 )
@@ -41,6 +41,7 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "years, y",
+			Value: "all",
 			Usage: "Scrape activityfrom years `2016,2017,2019`",
 		},
 		cli.StringFlag{
@@ -48,8 +49,29 @@ func main() {
 			Usage: "Save the GIF in the output directory `./dir`",
 			Value: "./out",
 		},
+		cli.StringFlag{
+			Name:  "speed, s",
+			Usage: "Set the transition speed of the GIF to `50`ms",
+			Value: "100",
+		},
+		cli.StringFlag{
+			Name:  "resize, r",
+			Usage: "Set the resizing percentage of the GIF to `60%`",
+			Value: "50%",
+		},
 	}
 	app.Action = generateGIF
+
+	cli.AppHelpTemplate = `NAME:
+	 {{.Name}} - {{.Usage}}
+
+USAGE:
+   {{.HelpName}} {{if .VisibleFlags}}[global options]{{end}} GitHub-username
+
+GLOBAL OPTIONS:{{if .VisibleFlags}}
+{{range .VisibleFlags}}{{.}}
+{{end}}{{end}}
+`
 
 	err := app.Run(os.Args)
 	if err != nil {
@@ -67,8 +89,13 @@ func generateGIF(c *cli.Context) error {
 		return nil
 	}
 
-	specificYears := parseYearFlag(c.String("years"))
+	specificYears, err := parseYearFlag(c.String("years"), userHandle)
+	if err != nil {
+		return err
+	}
 	outputDir := c.String("out-dir")
+	gifSpeed := c.String("speed")
+	gifResize := c.String("resize")
 
 	garbageCollector := []string{}
 	defer cleanUp(&garbageCollector)
@@ -76,7 +103,7 @@ func generateGIF(c *cli.Context) error {
 	log.Println("Scraping Activities")
 	activityGraphs := []graph{}
 	for _, year := range specificYears {
-		activity, err := scrapeActivity(userHandle, year)
+		activity, err := parseActivity(userHandle, year)
 		if err != nil {
 			log.Printf("scrape activity for %s: %v\n", year, err)
 			continue
@@ -100,7 +127,7 @@ func generateGIF(c *cli.Context) error {
 	log.Println("Converting activities to SVGs")
 	svgs := []string{}
 	for _, graph := range activityGraphs {
-		svgName, err := toSVG(graph, outputDir)
+		svgName, err := svg(graph, outputDir)
 		garbageCollector = append(garbageCollector, svgName)
 		if err != nil {
 			log.Printf("SVG: %v\n", err)
@@ -120,7 +147,7 @@ func generateGIF(c *cli.Context) error {
 	log.Println("Converting SVGs to JPGs")
 	jpgs := []string{}
 	for _, svg := range svgs {
-		jpg, err := toJPG(svg)
+		jpg, err := jpg(svg)
 		garbageCollector = append(garbageCollector, jpg)
 		if err != nil {
 			log.Println(err)
@@ -135,7 +162,7 @@ func generateGIF(c *cli.Context) error {
 	}
 
 	log.Println("Bundling JPGs to single GIF")
-	gif, err := toGIF(jpgs, userHandle)
+	gif, err := gif(jpgs, userHandle, gifSpeed, gifResize)
 	if err != nil {
 		return fmt.Errorf("GIF: %v", err)
 	}
@@ -145,49 +172,16 @@ func generateGIF(c *cli.Context) error {
 	return nil
 }
 
-// parseYearFlag returns the years passed to the -y flag
-// if no flag is passed, it defaults to current year
-func parseYearFlag(rawFlag string) []string {
-	cleanYearFlag := strings.Trim(rawFlag, ", ")
-
-	var specificYears []string
-	if cleanYearFlag == "" {
-		currentYear := fmt.Sprintf("%d", time.Now().Year())
-		specificYears = append(specificYears, currentYear)
-	} else {
-		specificYears = strings.Split(cleanYearFlag, ",")
-	}
-
-	return specificYears
-}
-
-// activity scrapes the user activity for a GitHub user for a given year
-func scrapeActivity(userHandle, year string) (activity, error) {
-	body, err := getHomePage(userHandle, year)
-	if err != nil {
-		return activity{}, err
-	}
-
-	a, err := extractActivity(body)
-	if err != nil {
-		return activity{}, err
-	}
-	a.Handle = userHandle
-	a.Year = year
-
-	return a, nil
-}
-
-// getHomePage GETs the HTML text of a GitHub's user homepage overview for a given year
-func getHomePage(userHandle, year string) ([]byte, error) {
-	homePage := fmt.Sprintf("https://github.com/%[1]s?tab=overview&from=%[2]s-01-01&to=%[2]s-12-31", userHandle, year)
-	req, err := http.NewRequest("GET", homePage, nil)
+// html GETs the HTML text of a URL
+func html(url string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set(
 		"User-Agent",
-		"Activity Giffer v0.0	https://www.github.com/camilogarcialarotta/Activity-Giffer - This bot generates GIFs from the user's yearly activity graph")
+		"Activity Giffer v0.0	https://www.github.com/camilogarcialarotta/Activity-Giffer - This bot generates GIFs from the user's yearly activity graph",
+	)
 
 	client := &http.Client{}
 	res, err := client.Do(req)
@@ -196,7 +190,7 @@ func getHomePage(userHandle, year string) ([]byte, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("GET status: %s: %s", res.Status, homePage)
+		return nil, fmt.Errorf("GET status: %s: %s", res.Status, url)
 	}
 
 	body, err := ioutil.ReadAll(res.Body)
@@ -206,8 +200,97 @@ func getHomePage(userHandle, year string) ([]byte, error) {
 	return body, nil
 }
 
-// extractActivity returns a activity from a GitHub homepage html text
-func extractActivity(html []byte) (activity, error) {
+// svg creates an SVG of the user's activity in the output directory
+// the file will be created as <outputDir>/<userHandle>-<year>.jpg
+// if the output directory does not exist, svg will create it
+
+func svg(graph graph, outputDir string) (string, error) {
+	tmpl, err := template.ParseFiles("svg.tmpl")
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+		if err := os.Mkdir(outputDir, os.ModePerm); err != nil {
+			return "", nil
+		}
+	}
+
+	fileName := fmt.Sprintf("%s-%s-*.svg", graph.Data.Handle, graph.Data.Year)
+	f, err := ioutil.TempFile(outputDir, fileName)
+	if err != nil {
+		return f.Name(), err
+	}
+	defer f.Close()
+
+	err = tmpl.Execute(f, graph)
+	if err != nil {
+		return f.Name(), err
+	}
+
+	return f.Name(), nil
+}
+
+// jpg converts an SVG to JPG via ImageMagick
+// it creates the JPG inside the same directory as the SVG
+func jpg(svg string) (string, error) {
+	jpg := strings.Replace(svg, ".svg", ".jpg", 1)
+	cmd := exec.Command("convert", "-density", "1000", "-resize", "1000x", svg, jpg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("JPG: %v", err)
+	}
+	return jpg, nil
+}
+
+// gif bundles the JPGs to create <userhandle>.gif via ImageMagick
+// it creates the GIF inside the same directory as the JPGs
+func gif(jpgs []string, userHandle, speed, resize string) (string, error) {
+	switch {
+	case len(jpgs) == 0:
+		return "", errors.New("GIF: no JPGs to bundle")
+	case speed == "":
+		return "", errors.New("GIF: no transition speed given")
+	case resize == "":
+		return "", errors.New("GIF: no resize speed given")
+	}
+
+	outputDir := filepath.Dir(jpgs[0])
+	fileName := fmt.Sprintf("%s.gif", userHandle)
+	gif := filepath.Join(".", outputDir, fileName)
+	args := []string{"-resize", resize, "-delay", speed, "-loop", "0"}
+	args = append(args, jpgs...)
+	args = append(args, gif)
+	cmd := exec.Command("convert", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return gif, nil
+}
+
+// parseActivity returns an activity for a GitHub user on a given year
+func parseActivity(userHandle, year string) (activity, error) {
+	url := fmt.Sprintf("https://github.com/%[1]s?tab=overview&from=%[2]s-01-01&to=%[2]s-12-31", userHandle, year)
+	body, err := html(url)
+	if err != nil {
+		return activity{}, err
+	}
+
+	a, err := scrapeActivity(body)
+	if err != nil {
+		return activity{}, err
+	}
+	a.Handle = userHandle
+	a.Year = year
+
+	return a, nil
+}
+
+// scrapeActivity returns an activity from a GitHub homepage HTML text
+func scrapeActivity(html []byte) (activity, error) {
 	activity := activity{}         // the struct to return
 	activities := map[string]int{} // the temporary map to store scrapped activities
 
@@ -275,28 +358,52 @@ func extractActivity(html []byte) (activity, error) {
 	return activity, nil
 }
 
-// extractBetween will return the characters in s between the left and right tokens
-func extractBetween(s, left, right []byte) ([]byte, error) {
-	leftIdx := bytes.Index(s, left)
-	if leftIdx == -1 {
-		return nil, patternNotFound(left)
+// parseYearFlag returns the years passed to the -y flag
+// if no flag is passed, it defaults to all years
+func parseYearFlag(rawFlag, handle string) ([]string, error) {
+	if rawFlag == "all" {
+		body, err := html(fmt.Sprintf("https://github.com/%s", handle))
+		if err != nil {
+			return nil, fmt.Errorf("parse year flag: %v", err)
+		}
+
+		return scrapeYears(body)
 	}
 
-	leftOffset := leftIdx + len(left)
-	if leftOffset > len(s) {
-		return nil, fmt.Errorf("bytes.Index: left offset larger than s: %s", left)
-	}
-
-	rightIdx := bytes.Index(s[leftOffset:], right)
-	if rightIdx == -1 {
-		return nil, patternNotFound(right)
-	}
-
-	return s[leftOffset : leftOffset+rightIdx], nil
+	cleanYearFlag := strings.Trim(rawFlag, ", ")
+	return strings.Split(cleanYearFlag, ","), nil
 }
 
-func patternNotFound(pattern []byte) error {
-	return fmt.Errorf("bytes.Index: could not find %s", pattern)
+// scrapeYears returns all available activity years from a GitHub homepage HTML text
+// the years are returned in chronological order
+func scrapeYears(html []byte) ([]string, error) {
+	startList := []byte("<ul class=\"filter-list small\">")
+	endList := []byte("</ul>")
+	startLink := []byte("<a")
+	startYear := []byte("id=\"year-link-")
+	quote := []byte("\"")
+
+	rawYearList, err := extractBetween(html, startList, endList)
+	if err != nil {
+		return nil, fmt.Errorf("extractBetween: %v", err)
+	}
+
+	rawYears := bytes.Split(rawYearList, startLink)
+	rawYears = rawYears[1:] // drop first slice, it only contains <li>
+
+	years := []string{}
+	for _, rawYear := range rawYears {
+		year, err := extractBetween(rawYear, startYear, quote)
+		if err != nil {
+			log.Printf("extractBetween: %v", err)
+			continue
+		}
+		years = append(years, string(year))
+	}
+
+	sort.Strings(years)
+
+	return years, nil
 }
 
 // coordinates computes the coords forming the SVG path of the activity percentages
@@ -329,70 +436,28 @@ func cappedDelta(n, m, thresh float64) float64 {
 	return m * delta
 }
 
-// toSVG creates an SVG of the user's activity in the output directory
-// the file will be created as <outputDir>/<userHandle>-<year>.jpg
-// if the output directory does not exist, toSVG will create it
-
-func toSVG(graph graph, outputDir string) (string, error) {
-	tmpl, err := template.ParseFiles("svg.tmpl")
-	if err != nil {
-		return "", err
+// extractBetween will return the characters in s between the left and right tokens
+func extractBetween(s, left, right []byte) ([]byte, error) {
+	leftIdx := bytes.Index(s, left)
+	if leftIdx == -1 {
+		return nil, patternNotFound(left)
 	}
 
-	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
-		if err := os.Mkdir(outputDir, os.ModePerm); err != nil {
-			return "", nil
-		}
+	leftOffset := leftIdx + len(left)
+	if leftOffset > len(s) {
+		return nil, fmt.Errorf("bytes.Index: left offset larger than s: %s", left)
 	}
 
-	fileName := fmt.Sprintf("%s-%s-*.svg", graph.Data.Handle, graph.Data.Year)
-	f, err := ioutil.TempFile(outputDir, fileName)
-	if err != nil {
-		return f.Name(), err
-	}
-	defer f.Close()
-
-	err = tmpl.Execute(f, graph)
-	if err != nil {
-		return f.Name(), err
+	rightIdx := bytes.Index(s[leftOffset:], right)
+	if rightIdx == -1 {
+		return nil, patternNotFound(right)
 	}
 
-	return f.Name(), nil
+	return s[leftOffset : leftOffset+rightIdx], nil
 }
 
-// toJPG converts an SVG to JPG via ImageMagick
-// it creates the JPG inside the same directory as the SVG
-func toJPG(svg string) (string, error) {
-	jpg := strings.Replace(svg, ".svg", ".jpg", 1)
-	cmd := exec.Command("convert", "-density", "1000", "-resize", "1000x", svg, jpg)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("JPG: %v", err)
-	}
-	return jpg, nil
-}
-
-// toGIF bundles the JPGs to create <userhandle>.gif via ImageMagick
-// it creates the GIF inside the same directory as the JPGs
-func toGIF(jpgs []string, userHandle string) (string, error) {
-	if len(jpgs) == 0 {
-		return "", errors.New("GIF: no JPGs to bundle")
-	}
-
-	outputDir := filepath.Dir(jpgs[0])
-	fileName := fmt.Sprintf("%s.gif", userHandle)
-	gif := filepath.Join(".", outputDir, fileName)
-	args := []string{"-resize", "50%", "-delay", "100", "-loop", "0"}
-	args = append(args, jpgs...)
-	args = append(args, gif)
-	cmd := exec.Command("convert", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", err
-	}
-	return gif, nil
+func patternNotFound(pattern []byte) error {
+	return fmt.Errorf("bytes.Index: could not find %s", pattern)
 }
 
 // cleanUp deletes all the files passed as input
