@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/urfave/cli"
@@ -89,79 +90,34 @@ func generateGIF(c *cli.Context) error {
 		return nil
 	}
 
+	outputDir := c.String("out-dir")
+	gifSpeed := c.String("speed")
+	gifResize := c.String("resize")
 	specificYears, err := parseYearFlag(c.String("years"), userHandle)
 	if err != nil {
 		return err
 	}
-	outputDir := c.String("out-dir")
-	gifSpeed := c.String("speed")
-	gifResize := c.String("resize")
+	if len(specificYears) == 0 {
+		return errors.New("failed to parse any years")
+	}
 
+	lock := &sync.RWMutex{}
 	garbageCollector := []string{}
 	defer cleanUp(&garbageCollector)
 
-	log.Println("Scraping Activities")
-	activityGraphs := []graph{}
-	for _, year := range specificYears {
-		activity, err := parseActivity(userHandle, year)
-		if err != nil {
-			log.Printf("scrape activity for %s: %v\n", year, err)
-			continue
-		}
+	chanSize := len(specificYears)
 
-		coords, err := coordinates(activity)
-		if err != nil {
-			log.Printf("coordinates for %s: %v\n", year, err)
-			continue
-		}
+	yearc := genYears(specificYears, chanSize)
+	actc := genActivities(userHandle, yearc, chanSize)
+	graphc := genGraph(actc, chanSize)
+	svgc := genSVG(graphc, chanSize, outputDir, &garbageCollector, lock)
+	jpgc := genJPG(svgc, chanSize, &garbageCollector, lock)
 
-		log.Printf("Activity: %+v\n", activity)
-
-		activityGraphs = append(activityGraphs, graph{activity, coords})
-	}
-
-	if len(activityGraphs) == 0 {
-		return fmt.Errorf("Failed to scrape any activities for %s", userHandle)
-	}
-
-	log.Println("Converting activities to SVGs")
-	svgs := []string{}
-	for _, graph := range activityGraphs {
-		svgName, err := svg(graph, outputDir)
-		garbageCollector = append(garbageCollector, svgName)
-		if err != nil {
-			log.Printf("SVG: %v\n", err)
-			continue
-		}
-		//  we don't use the idx to directly store the svg filename
-		// because in case of failure for any of the years,
-		// its easier to just append the succesful ones
-		// e.g. append(svgs, svgName) instead of svgs[idx] = svgName
-		svgs = append(svgs, svgName)
-	}
-
-	if len(svgs) == 0 {
-		return fmt.Errorf("Failed to create a single SVG for %s", userHandle)
-	}
-
-	log.Println("Converting SVGs to JPGs")
-	jpgs := []string{}
-	for _, svg := range svgs {
-		jpg, err := jpg(svg)
-		garbageCollector = append(garbageCollector, jpg)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		jpgs = append(jpgs, jpg)
-	}
-
+	jpgs := bundleJPGs(jpgc)
 	if len(jpgs) == 0 {
 		return fmt.Errorf("Failed to create a single JPG for %s", userHandle)
 	}
 
-	log.Println("Bundling JPGs to single GIF")
 	gif, err := gif(jpgs, userHandle, gifSpeed, gifResize)
 	if err != nil {
 		return fmt.Errorf("GIF: %v", err)
@@ -170,6 +126,112 @@ func generateGIF(c *cli.Context) error {
 	log.Printf("Created: %s\n", gif)
 
 	return nil
+}
+
+func genYears(years []string, size int) <-chan string {
+	var out = make(chan string, size)
+	go func() {
+		defer close(out)
+		for _, y := range years {
+			out <- y
+		}
+	}()
+	return out
+}
+
+func genActivities(handle string, in <-chan string, size int) <-chan activity {
+	var out = make(chan activity, size)
+	var wg sync.WaitGroup
+	wg.Add(size)
+	go func() {
+		for year := range in {
+			go func(year string) {
+				defer wg.Done()
+				act, err := parseActivity(handle, year)
+				if err != nil {
+					log.Printf("scrape activity for %s: %v\n", year, err)
+					return
+				}
+				log.Printf("Activity: %+v\n", act)
+				out <- act
+			}(year)
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}
+
+func genGraph(in <-chan activity, size int) <-chan graph {
+	var out = make(chan graph, size)
+	go func() {
+		defer close(out)
+		for act := range in {
+			coord, err := coordinates(act)
+			if err != nil {
+				log.Printf("coordinates for %s: %v\n", act.Year, err)
+				continue
+			}
+			out <- graph{act, coord}
+		}
+	}()
+	return out
+}
+func genSVG(in <-chan graph, size int, dir string, garbage *[]string, lock *sync.RWMutex) <-chan string {
+	var out = make(chan string, size)
+	go func() {
+		defer close(out)
+		for graph := range in {
+			svg, err := svg(graph, dir)
+			lock.Lock()
+			*garbage = append(*garbage, svg)
+			lock.Unlock()
+			if err != nil {
+				log.Printf("SVG: %v\n", err)
+				continue
+			}
+			out <- svg
+		}
+	}()
+	return out
+}
+
+func genJPG(in <-chan string, size int, garbage *[]string, lock *sync.RWMutex) <-chan string {
+	var out = make(chan string, size)
+	var wg sync.WaitGroup
+	wg.Add(size)
+	go func() {
+		for svg := range in {
+			go func(svg string) {
+				defer wg.Done()
+				jpg, err := jpg(svg)
+				lock.Lock()
+				*garbage = append(*garbage, jpg)
+				lock.Unlock()
+				if err != nil {
+					log.Printf("JPG: %v\n", err)
+					return
+				}
+				out <- jpg
+			}(svg)
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}
+
+func bundleJPGs(in <-chan string) []string {
+	jpgs := []string{}
+	for jpg := range in {
+		jpgs = append(jpgs, jpg)
+	}
+	sort.Strings(jpgs)
+	return jpgs
 }
 
 // html GETs the HTML text of a URL
