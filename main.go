@@ -107,12 +107,14 @@ func generateGIF(c *cli.Context) error {
 
 	chanSize := len(specificYears)
 
+	// processing pipeline
 	yearc := genYears(specificYears, chanSize)
 	actc := genActivities(userHandle, yearc, chanSize)
 	graphc := genGraph(actc, chanSize)
 	svgc := genSVG(graphc, chanSize, outputDir, &garbageCollector, lock)
 	jpgc := genJPG(svgc, chanSize, &garbageCollector, lock)
 
+	// pipeline sink
 	jpgs := bundleJPGs(jpgc)
 	if len(jpgs) == 0 {
 		return fmt.Errorf("Failed to create a single JPG for %s", userHandle)
@@ -128,6 +130,7 @@ func generateGIF(c *cli.Context) error {
 	return nil
 }
 
+// genYears fans out every year into a channel
 func genYears(years []string, size int) <-chan string {
 	var out = make(chan string, size)
 	go func() {
@@ -139,6 +142,7 @@ func genYears(years []string, size int) <-chan string {
 	return out
 }
 
+// genActivities creates and passes activities into a channel for every year in the input channel
 func genActivities(handle string, in <-chan string, size int) <-chan activity {
 	var out = make(chan activity, size)
 	var wg sync.WaitGroup
@@ -164,6 +168,7 @@ func genActivities(handle string, in <-chan string, size int) <-chan activity {
 	return out
 }
 
+// genGraph creates and passes graphs into a channel for every activity in the input channel
 func genGraph(in <-chan activity, size int) <-chan graph {
 	var out = make(chan graph, size)
 	go func() {
@@ -179,6 +184,8 @@ func genGraph(in <-chan activity, size int) <-chan graph {
 	}()
 	return out
 }
+
+// genSVG creates and passes SVG filenames into a channel for every graph in the input channel
 func genSVG(in <-chan graph, size int, dir string, garbage *[]string, lock *sync.RWMutex) <-chan string {
 	var out = make(chan string, size)
 	go func() {
@@ -198,6 +205,7 @@ func genSVG(in <-chan graph, size int, dir string, garbage *[]string, lock *sync
 	return out
 }
 
+// genJPG creates and passes JPG filenames into a channel for every SVG in the input channel
 func genJPG(in <-chan string, size int, garbage *[]string, lock *sync.RWMutex) <-chan string {
 	var out = make(chan string, size)
 	var wg sync.WaitGroup
@@ -225,6 +233,7 @@ func genJPG(in <-chan string, size int, garbage *[]string, lock *sync.RWMutex) <
 	return out
 }
 
+// bundleJPGs aggreagates all the JPG filenames in the input channel and sorts it
 func bundleJPGs(in <-chan string) []string {
 	jpgs := []string{}
 	for jpg := range in {
