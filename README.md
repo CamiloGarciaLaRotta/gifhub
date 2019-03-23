@@ -1,7 +1,9 @@
-# gifhub
-:chart_with_upwards_trend: Create GIFs from user's GitHub activity graph
+# gifhub 
+:chart_with_upwards_trend: Create GIFs from user's GitHub activity graph <a href="https://goreportcard.com/report/github.com/camilogarcialarotta/gifhub"><img align="right" src="https://goreportcard.com/badge/github.com/camilogarcialarotta/gifhub"></a>
 
+<p align="center">
 <img src="https://i.imgur.com/lbsTxaV.gif" width="300">
+</p>
 
 ## Dependencies
 - [ImageMagick](https://www.imagemagick.org/): Convert SVG :arrow_right: JPG :arrow_right: GIF

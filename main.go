@@ -413,7 +413,7 @@ func scrapeActivity(html []byte) (activity, error) {
 			return activity, err
 		}
 
-		// to avoid unecessary computations, only store if non-zero percentage
+		// to avoid unnecessary computations, only store if non-zero percentage
 		if num, err := strconv.Atoi(string(value)); err != nil {
 			return activity, err
 		} else if num != 0 {
