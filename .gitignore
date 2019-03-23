@@ -9,7 +9,7 @@
 *.so
 *.dylib
 main
-activitygiffer
+gifhub
 
 # Test binary, build with `go test -c`
 *.test

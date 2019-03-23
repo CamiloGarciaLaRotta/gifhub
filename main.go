@@ -37,7 +37,7 @@ type graph struct {
 
 func main() {
 	app := cli.NewApp()
-	app.Name = "Activity Giffer"
+	app.Name = "gifhub"
 	app.Usage = "Create GIFs from a people's GitHub activity graph"
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
@@ -251,7 +251,7 @@ func html(url string) ([]byte, error) {
 	}
 	req.Header.Set(
 		"User-Agent",
-		"Activity Giffer v0.0	https://www.github.com/camilogarcialarotta/Activity-Giffer - This bot generates GIFs from the user's yearly activity graph",
+		"gifhub v0.0	https://www.github.com/camilogarcialarotta/Activity-Giffer - This bot generates GIFs from the user's yearly activity graph",
 	)
 
 	client := &http.Client{}
