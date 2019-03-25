@@ -86,8 +86,7 @@ func generateGIF(c *cli.Context) error {
 	if c.NArg() > 0 {
 		userHandle = c.Args().Get(0)
 	} else {
-		cli.ShowAppHelp(c)
-		return nil
+		return cli.ShowAppHelp(c)
 	}
 
 	outputDir := c.String("out-dir")
