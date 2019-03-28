@@ -2,7 +2,8 @@ package main
 
 import (
 	"github.com/golang/freetype/truetype"
-	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/font/gofont/gobold"
+
 	"image"
 	"image/color"
 	"image/color/palette"
@@ -33,15 +34,15 @@ func main() {
 
 	const (
 		w = 1000
-		h = 1000
+		h = 1100
 	)
 	// generate gif via peterhellberg/gfx
 	stdlibGIF(w, h, "stdlib.gif")
 
-	// // generate gif via peterhellberg/gfx
+	// generate gif via peterhellberg/gfx
 	gfxGIF(w, h, "gfx.gif")
 
-	// // generate gif via llgcode/draw2d
+	// generate gif via llgcode/draw2d
 	draw2dGIF(w, h, "draw2d.gif")
 
 	// generate gif via
@@ -123,28 +124,82 @@ func draw2dGIF(w, h int, output string) {
 }
 
 func ggGIF(w, h int, output string) {
-	font, err := truetype.Parse(goregular.TTF)
+	font, err := truetype.Parse(gobold.TTF)
 	if err != nil {
 		log.Fatal(err)
 	}
+	label := truetype.NewFace(font, &truetype.Options{Size: 48})
+	value := truetype.NewFace(font, &truetype.Options{Size: 36})
 
-	face := truetype.NewFace(font, &truetype.Options{Size: 48})
+	rand.Seed(time.Now().UnixNano())
 
-	dc1 := gg.NewContext(w, h)
-	dc1.SetFontFace(face)
-	dc1.SetRGB(1, 1, 1)
-	dc1.Clear()
-	dc1.SetRGB(0, 0, 0)
-	dc1.DrawStringAnchored("hello", 512, 512, 0.5, 0.5)
+	lightGreen := color.RGBA{123, 201, 111, 0xff}
+	darkGreen := color.RGBA{108, 178, 103, 0xff}
 
-	dc2 := gg.NewContext(w, h)
-	dc2.SetFontFace(face)
-	dc2.SetRGB(1, 1, 1)
-	dc2.Clear()
-	dc2.SetRGB(0, 0, 0)
-	dc2.DrawStringAnchored("world", 512, 512, 0.5, 0.5)
+	imgs := []image.Image{}
+	for i := 0; i < 5; i++ {
+		dc := gg.NewContext(w, h)
+		dc.SetColor(color.White)
+		dc.Clear()
 
-	GIF(output, 35, dc1.Image(), dc2.Image())
+		cr := float64(rand.Intn(250)) + 250
+		is := float64(rand.Intn(250)) + 500
+		pr := float64(rand.Intn(250)) + 500
+		cm := float64(rand.Intn(250)) + 250
+
+		// draw polygon
+		dc.SetColor(lightGreen)
+		dc.MoveTo(cr, 500)
+		dc.LineTo(500, is)
+		dc.LineTo(pr, 500)
+		dc.LineTo(500, cm)
+		dc.Fill()
+
+		// draw axis
+		dc.SetLineWidth(5)
+		dc.SetColor(darkGreen)
+		dc.DrawLine(250, 500, 750, 500)
+		dc.DrawLine(500, 250, 500, 750)
+		dc.Stroke()
+
+		// draw circles
+		circle(darkGreen, color.White, 8, cr, 500, dc)
+		circle(darkGreen, color.White, 8, 500, is, dc)
+		circle(darkGreen, color.White, 8, pr, 500, dc)
+		circle(darkGreen, color.White, 8, 500, cm, dc)
+
+		// draw text
+		dc.SetFontFace(label)
+		dc.SetRGB(149, 157, 165)
+		dc.DrawStringAnchored("Handle", 500, 950, 0.5, 0.5)
+		dc.DrawStringAnchored("year", 500, 1000, 0.5, 0.5)
+		dc.DrawStringAnchored("Code Review", 500, 180, 0.5, 0.5)
+		dc.DrawStringAnchored("Issues", 870, 520, 0.5, 0.5)
+		dc.DrawStringAnchored("Pull Requests", 500, 850, 0.5, 0.5)
+		dc.DrawStringAnchored("Commits", 130, 520, 0.5, 0.5)
+
+		dc.SetFontFace(value)
+		dc.SetRGB(88, 96, 105)
+		dc.DrawStringAnchored("10%", 500, 130, 0.5, 0.5)
+		dc.DrawStringAnchored("20%", 880, 475, 0.5, 0.5)
+		dc.DrawStringAnchored("50%", 500, 800, 0.5, 0.5)
+		dc.DrawStringAnchored("90%", 130, 475, 0.5, 0.5)
+
+		imgs = append(imgs, dc.Image())
+	}
+
+	GIF(output, 35, imgs...)
+}
+
+// TODO non hardcoded inner radius
+func circle(outerColor, innerColor color.Color, r, x, y float64, dc *gg.Context) {
+	dc.SetColor(color.White)
+	dc.DrawCircle(x, y, r)
+	dc.FillPreserve()
+	dc.SetColor(outerColor)
+	dc.SetLineWidth(4)
+	dc.Stroke()
+	dc.SetColor(innerColor)
 }
 
 // GIF creates an output gif file with the input images as frames
