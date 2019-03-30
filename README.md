@@ -5,8 +5,9 @@
 <img src="https://i.imgur.com/lbsTxaV.gif" width="300">
 </p>
 
-## Dependencies
-- [ImageMagick](https://www.imagemagick.org/): Convert SVG :arrow_right: JPG :arrow_right: GIF
+## Go Dependencies
+No non-Go dependencies required!
+- [fogleman/gg](https://github.com/fogleman/gg): 2D graphics library
 - [urfave/cli](https://github.com/urfave/cli): CLI framework
 
 ## How to use
@@ -14,7 +15,7 @@
 
 2. Depending on your platform you can run `gifhub` in 2 ways:
 - **Linux/OSX/Windows:** Build and run a Docker container with the app. Requires Docker
-- **Linux:** Compile directly from source. Requires Golang and the 2 dependencies (ImageMagick, urfave/cli)
+- **Linux:** Compile directly from source. Requires Golang and the 2 dependencies (fogleman/gg, urfave/cli)
 
 Regardless of how you choose to run the app, clone the repository
   ```bash
@@ -45,13 +46,7 @@ For more information on available flags, run `gifhub --help`
 ### Run directly in your machine
 Install the binary and its dependencies
 ```bash
-# install ImageMagick with the command for your distribution
-sudo dnf install ImageMagick          # Fedora
-sudo apt-get install imagemagick      # Debian
-sudo pacman -S imagemagick            # Arch Linux
-sudo emerge -av media-gfx/imagemagick # Gentoo
-
-# install urfave/cli and gifhub
+# install fogleman/gg, urfave/cli and gifhub
 go install ./...
 ```
 

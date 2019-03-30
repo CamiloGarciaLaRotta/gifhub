@@ -7,8 +7,7 @@ RUN go mod download
 
 FROM alpine as final
 WORKDIR /app
-COPY svg.tmpl .
-RUN apk add --no-cache imagemagick ca-certificates ttf-freefont
+RUN apk add --no-cache ca-certificates ttf-freefont
 ENTRYPOINT [ "./gifhub" ]
 
 FROM compiler as base

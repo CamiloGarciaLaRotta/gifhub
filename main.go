@@ -4,35 +4,60 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/golang/freetype/truetype"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/goregular"
+	"image"
+	"image/color"
+	"image/color/palette"
+	"image/draw"
+	"image/gif"
 	"io/ioutil"
 	"log"
 	"math"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"text/template"
 
+	"github.com/fogleman/gg"
 	"github.com/urfave/cli"
 )
 
-// activity contains GitHub's tracked user activity percentages
+// activity contains GitHub's tracked user activity percentages for a given year
 type activity struct {
 	Handle, Year                      string
 	Commits, Issues, Prs, CodeReviews int
 }
 
-// coords contains the X,Y coordinates of the activities in an activity graph
-type coords struct{ CodeReviewY, IssuesX, PrsY, CommitsX float64 }
+// coords contains the X,Y coordinates of the activities in an activity graph.
+// Aswell as measurements used to calculate margins and offsets
+type coords struct {
+	W, H, Mid, Factor, AxisMargin,
+	CodeReviewY, IssuesX, PrsY, CommitsX float64
+}
+
+// style contains the style attributes of the graph such as font, colors, and size of markers
+type style struct {
+	LabelColor, ValueColor, AxisColor, PolyColor color.Color
+	LabelFont, ValueFont                         font.Face
+	MarkerRadius                                 float64
+}
 
 // graph contains all information to build the graph of a user's activity for a given year
 type graph struct {
 	Data   activity
 	Coords coords
+}
+
+// activityImage contains the image encoding of an activity graph
+// as well as the year of the graph for identification and sorting
+type activityImage struct {
+	Img  image.Image
+	Year string
 }
 
 func main() {
@@ -51,14 +76,9 @@ func main() {
 			Value: "./out",
 		},
 		cli.StringFlag{
-			Name:  "speed, s",
-			Usage: "Set the transition speed of the GIF to `50`ms",
+			Name:  "delay, d",
+			Usage: "Set the transition delay of the GIF to `50`ms",
 			Value: "100",
-		},
-		cli.StringFlag{
-			Name:  "resize, r",
-			Usage: "Set the resizing percentage of the GIF to `60%`",
-			Value: "50%",
 		},
 	}
 	app.Action = generateGIF
@@ -90,8 +110,7 @@ func generateGIF(c *cli.Context) error {
 	}
 
 	outputDir := c.String("out-dir")
-	gifSpeed := c.String("speed")
-	gifResize := c.String("resize")
+	delay := c.Int("delay")
 	specificYears, err := parseYearFlag(c.String("years"), userHandle)
 	if err != nil {
 		return err
@@ -100,26 +119,23 @@ func generateGIF(c *cli.Context) error {
 		return errors.New("failed to parse any years")
 	}
 
-	lock := &sync.RWMutex{}
-	garbageCollector := []string{}
-	defer cleanUp(&garbageCollector)
-
 	chanSize := len(specificYears)
 
-	// processing pipeline
+	// pipeline source
 	yearc := genYears(specificYears, chanSize)
+
+	// processing pipeline
 	actc := genActivities(userHandle, yearc, chanSize)
 	graphc := genGraph(actc, chanSize)
-	svgc := genSVG(graphc, chanSize, outputDir, &garbageCollector, lock)
-	jpgc := genJPG(svgc, chanSize, &garbageCollector, lock)
+	imgc := genImg(graphc, chanSize)
 
 	// pipeline sink
-	jpgs := bundleJPGs(jpgc)
-	if len(jpgs) == 0 {
-		return fmt.Errorf("Failed to create a single JPG for %s", userHandle)
+	imgs := bundleImgs(imgc)
+	if len(imgs) == 0 {
+		return fmt.Errorf("Failed to create a single image for %s", userHandle)
 	}
 
-	gif, err := gif(jpgs, userHandle, gifSpeed, gifResize)
+	gif, err := encodeGIF(imgs, outputDir, userHandle, delay)
 	if err != nil {
 		return fmt.Errorf("GIF: %v", err)
 	}
@@ -129,7 +145,7 @@ func generateGIF(c *cli.Context) error {
 	return nil
 }
 
-// genYears fans out every year into a channel
+// genYears fans out every year to scrape the activity into a channel
 func genYears(years []string, size int) <-chan string {
 	var out = make(chan string, size)
 	go func() {
@@ -173,56 +189,37 @@ func genGraph(in <-chan activity, size int) <-chan graph {
 	go func() {
 		defer close(out)
 		for act := range in {
-			coord, err := coordinates(act)
-			if err != nil {
-				log.Printf("coordinates for %s: %v\n", act.Year, err)
-				continue
-			}
-			out <- graph{act, coord}
+			out <- graph{act, coordinates(act)}
 		}
 	}()
 	return out
 }
 
-// genSVG creates and passes SVG filenames into a channel for every graph in the input channel
-func genSVG(in <-chan graph, size int, dir string, garbage *[]string, lock *sync.RWMutex) <-chan string {
-	var out = make(chan string, size)
-	go func() {
-		defer close(out)
-		for graph := range in {
-			svg, err := svg(graph, dir)
-			lock.Lock()
-			*garbage = append(*garbage, svg)
-			lock.Unlock()
-			if err != nil {
-				log.Printf("SVG: %v\n", err)
-				continue
-			}
-			out <- svg
-		}
-	}()
-	return out
-}
+// genImg creates and passes images into a channel for every graph description in the input channel
+func genImg(in <-chan graph, size int) <-chan activityImage {
+	font, err := truetype.Parse(goregular.TTF)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-// genJPG creates and passes JPG filenames into a channel for every SVG in the input channel
-func genJPG(in <-chan string, size int, garbage *[]string, lock *sync.RWMutex) <-chan string {
-	var out = make(chan string, size)
+	var out = make(chan activityImage, size)
 	var wg sync.WaitGroup
 	wg.Add(size)
 	go func() {
-		for svg := range in {
-			go func(svg string) {
+		for g := range in {
+			go func(g graph) {
 				defer wg.Done()
-				jpg, err := jpg(svg)
-				lock.Lock()
-				*garbage = append(*garbage, jpg)
-				lock.Unlock()
-				if err != nil {
-					log.Printf("JPG: %v\n", err)
-					return
+				s := style{
+					LabelColor:   color.RGBA{88, 96, 105, 0xff},
+					ValueColor:   color.RGBA{149, 157, 165, 0xff},
+					AxisColor:    color.RGBA{108, 178, 103, 0xff},
+					PolyColor:    color.RGBA{123, 201, 111, 0xff},
+					LabelFont:    truetype.NewFace(font, &truetype.Options{Size: 24}),
+					ValueFont:    truetype.NewFace(font, &truetype.Options{Size: 22}),
+					MarkerRadius: 6,
 				}
-				out <- jpg
-			}(svg)
+				out <- activityImage{img(g, s), g.Data.Year}
+			}(g)
 		}
 	}()
 	go func() {
@@ -232,14 +229,68 @@ func genJPG(in <-chan string, size int, garbage *[]string, lock *sync.RWMutex) <
 	return out
 }
 
-// bundleJPGs aggreagates all the JPG filenames in the input channel and sorts it
-func bundleJPGs(in <-chan string) []string {
-	jpgs := []string{}
-	for jpg := range in {
-		jpgs = append(jpgs, jpg)
+// bundleImgs collects and sorts all the activity images in the input channel
+func bundleImgs(in <-chan activityImage) []image.Image {
+	// receive all activity images
+	unsortedImgs := []activityImage{}
+	for i := range in {
+		unsortedImgs = append(unsortedImgs, i)
 	}
-	sort.Strings(jpgs)
-	return jpgs
+	sort.Slice(unsortedImgs, func(i, j int) bool {
+		return unsortedImgs[i].Year < unsortedImgs[j].Year
+	})
+
+	// output sorted images
+	numFrames := len(unsortedImgs)
+	sortedImgs := make([]image.Image, numFrames)
+	for i := 0; i < numFrames; i++ {
+		sortedImgs[i] = unsortedImgs[i].Img
+	}
+
+	return sortedImgs
+}
+
+// encodeGIF bundles the frames to create <userhandle>.gif in the output directory
+func encodeGIF(frames []image.Image, outputDir, userHandle string, delay int) (string, error) {
+	switch {
+	case len(frames) == 0:
+		return "", errors.New("GIF: no images to bundle")
+	case delay == 0:
+		return "", errors.New("GIF: no transition delay given")
+	}
+
+	// create appropriate image type for GIF encoding
+	numFrames := len(frames)
+	palettedImgs := []*image.Paletted{}
+	for _, f := range frames {
+		paletted := image.NewPaletted(f.Bounds(), palette.Plan9)
+		draw.Draw(paletted, paletted.Rect, f, f.Bounds().Min, draw.Src)
+		palettedImgs = append(palettedImgs, paletted)
+	}
+
+	var delays = make([]int, numFrames)
+	for i := 0; i < numFrames; i++ {
+		delays[i] = delay
+	}
+
+	anim := gif.GIF{Delay: delays, Image: palettedImgs}
+
+	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+		if err := os.Mkdir(outputDir, os.ModePerm); err != nil {
+			return "", nil
+		}
+	}
+	fileName := fmt.Sprintf("%s.gif", userHandle)
+	file := filepath.Join(".", outputDir, fileName)
+	f, err := os.Create(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gif.EncodeAll(f, &anim)
+	f.Close()
+
+	return f.Name(), nil
 }
 
 // html GETs the HTML text of a URL
@@ -250,7 +301,7 @@ func html(url string) ([]byte, error) {
 	}
 	req.Header.Set(
 		"User-Agent",
-		"gifhub v0.0	https://www.github.com/camilogarcialarotta/Activity-Giffer - This bot generates GIFs from the user's yearly activity graph",
+		"gifhub v0.0 https://www.github.com/camilogarcialarotta/gifhub - This bot generates GIFs from the user's yearly activity graph",
 	)
 
 	client := &http.Client{}
@@ -270,75 +321,80 @@ func html(url string) ([]byte, error) {
 	return body, nil
 }
 
-// svg creates an SVG of the user's activity in the output directory
-// the file will be created as <outputDir>/<userHandle>-<year>.jpg
-// if the output directory does not exist, svg will create it
+// img generates an image from graph values g with the styles defined in s
+func img(g graph, s style) image.Image {
+	// to reduce cognitive load, unpack most used variables
+	w := g.Coords.W
+	h := g.Coords.H
+	mid := g.Coords.Mid
+	factor := g.Coords.Factor
+	axisMargin := g.Coords.AxisMargin
 
-func svg(graph graph, outputDir string) (string, error) {
-	tmpl, err := template.ParseFiles("svg.tmpl")
-	if err != nil {
-		return "", err
+	dc := gg.NewContext(int(w), int(h))
+	dc.SetColor(color.White)
+	dc.Clear()
+
+	// draw polygon
+	dc.SetColor(s.PolyColor)
+	dc.SetLineWidth(10)
+	dc.MoveTo(mid, g.Coords.CodeReviewY)
+	dc.LineTo(g.Coords.IssuesX, mid)
+	dc.LineTo(mid, g.Coords.PrsY)
+	dc.LineTo(g.Coords.CommitsX, mid)
+	dc.ClosePath()
+	dc.StrokePreserve()
+	dc.Fill()
+
+	// draw axis
+	dc.SetLineWidth(4)
+	dc.SetColor(s.AxisColor)
+	dc.DrawLine(axisMargin, mid, w-axisMargin, mid)
+	dc.DrawLine(mid, axisMargin, mid, w-axisMargin)
+	dc.Stroke()
+
+	// draw circles
+	if g.Data.CodeReviews > 0 {
+		circle(s.AxisColor, color.White, s.MarkerRadius, mid, g.Coords.CodeReviewY, dc)
+	}
+	if g.Data.Issues > 0 {
+		circle(s.AxisColor, color.White, s.MarkerRadius, g.Coords.IssuesX, mid, dc)
+	}
+	if g.Data.Prs > 0 {
+		circle(s.AxisColor, color.White, s.MarkerRadius, mid, g.Coords.PrsY, dc)
+	}
+	if g.Data.Commits > 0 {
+		circle(s.AxisColor, color.White, s.MarkerRadius, g.Coords.CommitsX, mid, dc)
 	}
 
-	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
-		if err := os.Mkdir(outputDir, os.ModePerm); err != nil {
-			return "", nil
-		}
-	}
+	// draw text
+	dc.SetFontFace(s.LabelFont)
+	dc.SetColor(s.LabelColor)
+	dc.DrawStringAnchored(g.Data.Handle, mid, h-1.25*factor, 0.5, 0.5)
+	dc.DrawStringAnchored(g.Data.Year, mid, h-0.75*factor, 0.5, 0.5)
+	dc.DrawStringAnchored("Code Review", mid, 1.5*factor, 0.5, 0.5)
+	dc.DrawStringAnchored("Issues", w-1.25*factor, mid+0.25*factor, 0.5, 0.5)
+	dc.DrawStringAnchored("Pull Requests", mid, w-1.25*factor, 0.5, 0.5)
+	dc.DrawStringAnchored("Commits", 1.25*factor, mid+0.25*factor, 0.5, 0.5)
 
-	fileName := fmt.Sprintf("%s-%s-*.svg", graph.Data.Handle, graph.Data.Year)
-	f, err := ioutil.TempFile(outputDir, fileName)
-	if err != nil {
-		return f.Name(), err
-	}
-	defer f.Close()
+	dc.SetFontFace(s.ValueFont)
+	dc.SetColor(s.ValueColor)
+	dc.DrawStringAnchored(fmt.Sprintf("%d%%", g.Data.CodeReviews), mid, factor, 0.5, 0.5)
+	dc.DrawStringAnchored(fmt.Sprintf("%d%%", g.Data.Issues), w-1.25*factor, mid-0.25*factor, 0.5, 0.5)
+	dc.DrawStringAnchored(fmt.Sprintf("%d%%", g.Data.Prs), mid, w-1.75*factor, 0.5, 0.5)
+	dc.DrawStringAnchored(fmt.Sprintf("%d%%", g.Data.Commits), 1.25*factor, mid-0.25*factor, 0.5, 0.5)
 
-	err = tmpl.Execute(f, graph)
-	if err != nil {
-		return f.Name(), err
-	}
-
-	return f.Name(), nil
+	return dc.Image()
 }
 
-// jpg converts an SVG to JPG via ImageMagick
-// it creates the JPG inside the same directory as the SVG
-func jpg(svg string) (string, error) {
-	jpg := strings.Replace(svg, ".svg", ".jpg", 1)
-	cmd := exec.Command("convert", "-density", "1000", "-resize", "1000x", svg, jpg)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("JPG: %v", err)
-	}
-	return jpg, nil
-}
-
-// gif bundles the JPGs to create <userhandle>.gif via ImageMagick
-// it creates the GIF inside the same directory as the JPGs
-func gif(jpgs []string, userHandle, speed, resize string) (string, error) {
-	switch {
-	case len(jpgs) == 0:
-		return "", errors.New("GIF: no JPGs to bundle")
-	case speed == "":
-		return "", errors.New("GIF: no transition speed given")
-	case resize == "":
-		return "", errors.New("GIF: no resize speed given")
-	}
-
-	outputDir := filepath.Dir(jpgs[0])
-	fileName := fmt.Sprintf("%s.gif", userHandle)
-	gif := filepath.Join(".", outputDir, fileName)
-	args := []string{"-resize", resize, "-delay", speed, "-loop", "0"}
-	args = append(args, jpgs...)
-	args = append(args, gif)
-	cmd := exec.Command("convert", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", err
-	}
-	return gif, nil
+// circle creates a circle with outer radius r and inner radius r/2
+// in the x,y coordinates of the image context
+func circle(outerColor, innerColor color.Color, r, x, y float64, dc *gg.Context) {
+	dc.SetColor(innerColor)
+	dc.DrawCircle(x, y, r)
+	dc.FillPreserve()
+	dc.SetColor(outerColor)
+	dc.SetLineWidth(r / 2)
+	dc.Stroke()
 }
 
 // parseActivity returns an activity for a GitHub user on a given year
@@ -476,22 +532,27 @@ func scrapeYears(html []byte) ([]string, error) {
 	return years, nil
 }
 
-// coordinates computes the coords forming the SVG path of the activity percentages
-func coordinates(activity activity) (coords, error) {
-	const (
-		xAxis          = 137.5 // x position of the axis Commits - Issues
-		yAxis          = 127.5 // y position of the axis CodeReviews - Prs
-		activityLength = 67.5  // length of a single activity axis
-		thresh         = 0.8   // threshold to cap the actiity delta
-	)
+// coordinates computes the coords forming the path of the activity polygon
+func coordinates(activity activity) coords {
+	const thresh = 0.8
+	w, h := 500.0, 560.0
+	mid := w / 2
+	factor := w / 10
+	axisOffset := 2.35
+	axisMargin := axisOffset * factor
+	axisLength := mid - axisMargin
 
-	coords := coords{
-		CodeReviewY: yAxis - cappedDelta(float64(activity.CodeReviews), activityLength, thresh),
-		IssuesX:     xAxis + cappedDelta(float64(activity.Issues), activityLength, thresh),
-		PrsY:        yAxis + cappedDelta(float64(activity.Prs), activityLength, thresh),
-		CommitsX:    xAxis - cappedDelta(float64(activity.Commits), activityLength, thresh),
+	return coords{
+		W:           w,
+		H:           h,
+		Mid:         mid,
+		AxisMargin:  axisMargin,
+		Factor:      factor,
+		CodeReviewY: mid - cappedDelta(float64(activity.CodeReviews), axisLength, thresh),
+		IssuesX:     mid + cappedDelta(float64(activity.Issues), axisLength, thresh),
+		PrsY:        mid + cappedDelta(float64(activity.Prs), axisLength, thresh),
+		CommitsX:    mid - cappedDelta(float64(activity.Commits), axisLength, thresh),
 	}
-	return coords, nil
 }
 
 // cappedDelta will return a delta with magnitude based on n and proportionate to m
@@ -528,15 +589,4 @@ func extractBetween(s, left, right []byte) ([]byte, error) {
 
 func patternNotFound(pattern []byte) error {
 	return fmt.Errorf("bytes.Index: could not find %s", pattern)
-}
-
-// cleanUp deletes all the files passed as input
-func cleanUp(files *[]string) {
-	log.Println("Cleaning up")
-	for _, file := range *files {
-		if err := os.Remove(file); err != nil {
-			log.Printf("Cleanup: %v", err)
-			continue
-		}
-	}
 }

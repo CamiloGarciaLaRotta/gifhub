@@ -5,12 +5,10 @@ LICENSE
 README.md
 
 # gifhub
-*.svg
-*.jpg
 gifhub
 main
-
-Dockerfile
-
 out
+
+# docker
+Dockerfile
 
