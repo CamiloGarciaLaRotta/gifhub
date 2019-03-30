@@ -201,25 +201,36 @@ func genImg(in <-chan graph, size int) <-chan activityImage {
 	if err != nil {
 		log.Fatal(err)
 	}
+	labelColor := color.RGBA{88, 96, 105, 0xff}
+	valueColor := color.RGBA{149, 157, 165, 0xff}
+	axisColor := color.RGBA{108, 178, 103, 0xff}
+	polyColor := color.RGBA{123, 201, 111, 0xff}
 
 	var out = make(chan activityImage, size)
 	var wg sync.WaitGroup
 	wg.Add(size)
+	activeGoRoutines := 0
 	go func() {
 		for g := range in {
+			activeGoRoutines++
 			go func(g graph) {
 				defer wg.Done()
 				s := style{
-					LabelColor:   color.RGBA{88, 96, 105, 0xff},
-					ValueColor:   color.RGBA{149, 157, 165, 0xff},
-					AxisColor:    color.RGBA{108, 178, 103, 0xff},
-					PolyColor:    color.RGBA{123, 201, 111, 0xff},
+					MarkerRadius: 6,
+					LabelColor:   labelColor,
+					ValueColor:   valueColor,
+					AxisColor:    axisColor,
+					PolyColor:    polyColor,
 					LabelFont:    truetype.NewFace(font, &truetype.Options{Size: 24}),
 					ValueFont:    truetype.NewFace(font, &truetype.Options{Size: 22}),
-					MarkerRadius: 6,
 				}
 				out <- activityImage{img(g, s), g.Data.Year}
 			}(g)
+		}
+		// when input channel is closed, reduce the waitgroup counter
+		// by the number of goroutines that were expected but not created
+		for i := 0; i < size-activeGoRoutines; i++ {
+			wg.Done()
 		}
 	}()
 	go func() {
