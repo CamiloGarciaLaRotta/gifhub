@@ -21,17 +21,6 @@ import (
 )
 
 func main() {
-	// DONE
-	// - create GIFs via image stdlib
-	// - create GIFs via gfx & draw2d & gg
-	// TODO
-	// - write text in all GIFs
-	//   see:
-	//   https://stackoverflow.com/questions/38299930/how-to-add-a-simple-text-label-to-an-image-in-go
-	//   https://godoc.org/github.com/golang/freetype
-	//
-	// - benchmark which lib (gfx, draw2d, gg) is fastest to create gifhub GIFs
-
 	const (
 		w = 1000
 		h = 1100
