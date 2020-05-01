@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/golang/freetype/truetype"
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/gofont/goregular"
 	"image"
 	"image/color"
 	"image/color/palette"
@@ -22,6 +19,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/golang/freetype/truetype"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/goregular"
 
 	"github.com/fogleman/gg"
 	"github.com/urfave/cli/v2"
@@ -301,14 +302,15 @@ func encodeGIF(frames []image.Image, outputDir, userHandle string, delay int) (s
 		log.Fatal(err)
 	}
 
-	gif.EncodeAll(f, &anim)
-	f.Close()
+	if err := gif.EncodeAll(f, &anim); err != nil {
+		return "", err
+	}
 
-	return f.Name(), nil
+	return f.Name(), f.Close()
 }
 
 // html GETs the HTML text of a URL
-func html(url string) ([]byte, error) {
+func html(url string) (body []byte, err error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -323,12 +325,19 @@ func html(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+
+	defer func() {
+		cerr := res.Body.Close()
+		if err == nil {
+			err = cerr
+		}
+	}()
+
 	if res.StatusCode != 200 {
 		return nil, fmt.Errorf("GET status: %s: %s", res.Status, url)
 	}
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err = ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}
