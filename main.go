@@ -24,7 +24,7 @@ import (
 	"sync"
 
 	"github.com/fogleman/gg"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 )
 
 // activity contains GitHub's tracked user activity percentages for a given year
@@ -65,20 +65,23 @@ func main() {
 	app.Name = "gifhub"
 	app.Usage = "Create GIFs from a people's GitHub activity graph"
 	app.Flags = []cli.Flag{
-		cli.StringFlag{
-			Name:  "years, y",
-			Value: "all",
-			Usage: "Scrape activityfrom years `2016,2017,2019`",
+		&cli.StringFlag{
+			Name:    "years",
+			Aliases: []string{"y"},
+			Value:   "all",
+			Usage:   "Scrape activityfrom years `2016,2017,2019`",
 		},
-		cli.StringFlag{
-			Name:  "out-dir, o",
-			Usage: "Save the GIF in the output directory `./dir`",
-			Value: "./out",
+		&cli.StringFlag{
+			Name:    "out-dir",
+			Aliases: []string{"o"},
+			Usage:   "Save the GIF in the output directory `./dir`",
+			Value:   "./out",
 		},
-		cli.StringFlag{
-			Name:  "delay, d",
-			Usage: "Set the transition delay of the GIF to `50`ms",
-			Value: "100",
+		&cli.StringFlag{
+			Name:    "delay",
+			Aliases: []string{"d"},
+			Usage:   "Set the transition delay of the GIF to `50`ms",
+			Value:   "100",
 		},
 	}
 	app.Action = generateGIF
