@@ -2,7 +2,7 @@
 :chart_with_upwards_trend: Create GIFs from user's GitHub activity graph <a href="https://goreportcard.com/report/github.com/camilogarcialarotta/gifhub"><img align="right" src="https://goreportcard.com/badge/github.com/camilogarcialarotta/gifhub"></a>
 
 <p align="center">
-<img src="https://i.imgur.com/Ap8yIpR.gif" width="300">
+<img src="https://user-images.githubusercontent.com/17187770/80809567-eeba6a80-8b8f-11ea-8a91-987fbfab002d.gif" width="300">
 </p>
 
 ## Go Dependencies
