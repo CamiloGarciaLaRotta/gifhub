@@ -107,7 +107,7 @@ GLOBAL OPTIONS:{{if .VisibleFlags}}
 // generateGIF creates a GIF of the activities of the input user
 func generateGIF(c *cli.Context) error {
 	var userHandle string
-	if c.NArg() > 0 {
+	if c.NArg() == 1 {
 		userHandle = c.Args().Get(0)
 	} else {
 		return cli.ShowAppHelp(c)
