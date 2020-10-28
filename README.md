@@ -12,24 +12,24 @@ No non-Go dependencies required, so the binary is cross-platform!
 
 ## How to use
 1. If your GitHub profile does not yet display activity overviews, [enable it](https://github.blog/changelog/2018-08-24-profile-activity-overview/)
+2. Run the CLI with a GitHub handle `gifhub camilogarcialarotta`  
+  The application will generate a GIF named after the user inside `./out`  
+  For more information on available flags, run `gifhub --help`
 
-2. You can run `gifhub` in 2 ways:
+### Installation
 
-### If you already have Go
+#### Golang
 
 ```bash
-# Install the binary and its dependencies
 go get github.com/camilogarcialarotta/gifhub
-
-# Then run the CLI with a GitHub handle
-gifhub camilogarcialarotta
 ```
 
-The application will generate a GIF named after the user inside `./out`  
-For more information on available flags, run `gifhub --help`
+#### Homebrew
+```bash
+brew install camilogarcialarotta/brews/gifhub
+```
 
-### If you don't want to install Go
-Build and run a Docker container with the app. Requires Docker.
+#### Docker
 
 First, clone the repository and build the image
 ```bash 
@@ -47,9 +47,6 @@ docker run -t \
   -v $(pwd)/out:/app/out \
   gifhub camilogarcialarotta
 ```
-
-The application will generate a GIF named after the user inside `./out`  
-For more information on available flags, run `gifhub --help`
 
 ## Credits
 Special thanks to:
